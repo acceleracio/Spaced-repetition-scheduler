@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Spaced Repetition Schedule</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        #loginContainer, #controlPanel {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            align-items: center;
+        }
+        #dateInput, #topicInput, #emailInput {
+            padding: 10px;
+        }
+        #loginMessage {
+            margin-left: 10px;
+            color: green;
+        }
+        #loginError {
+            margin-left: 10px;
+            color: red;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            max-height: 500px;
+            overflow-y: auto;
+            display: block;
+        }
+        thead {
+            position: sticky;
+            top: 0;
+            background-color: white;
+            z-index: 10;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 10px;
+            text-align: left;
+        }
+        th {
+            background-color: #f2f2f2;
+        }
+        .topic-cell {
+            background-color: #e6f3ff;
+            min-height: 30px;
+        }
+        #scheduleContainer {
+            max-height: 500px;
+            overflow-y: auto;
+        }
+        .delete-topic {
+            color: red;
+            cursor: pointer;
+            margin-left: 5px;
+        }
+        #mainApp {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="loginContainer">
+        <input type="email" id="emailInput" placeholder="Enter your email">
+        <button id="loginBtn">Login</button>
+        <span id="loginMessage"></span>
+        <span id="loginError"></span>
+    </div>
+
+    <div id="mainApp">
+        <h1>Spaced Repetition Schedule</h1>
+        
+        <div id="controlPanel">
+            <input type="date" id="dateInput">
+            <input type="text" id="topicInput" placeholder="Enter topic">
+            <button id="addTopicBtn">Add Topic</button>
+            <button id="logoutBtn">Logout</button>
+        </div>
+        
+        <div id="scheduleContainer">
+            <table id="scheduleTable">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Topics</th>
+                    </tr>
+                </thead>
+                <tbody id="scheduleBody">
+                    <!-- Days will be dynamically generated -->
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        class SpacedRepetitionSchedule {
+            constructor() {
+                this.loginContainer = document.getElementById('loginContainer');
+                this.mainApp = document.getElementById('mainApp');
+                this.emailInput = document.getElementById('emailInput');
+                this.loginBtn = document.getElementById('loginBtn');
+                this.logoutBtn = document.getElementById('logoutBtn');
+                this.loginMessage = document.getElementById('loginMessage');
+                this.loginError = document.getElementById('loginError');
+
+                this.scheduleBody = document.getElementById('scheduleBody');
+                this.dateInput = document.getElementById('dateInput');
+                this.topicInput = document.getElementById('topicInput');
+                this.addTopicBtn = document.getElementById('addTopicBtn');
+                this.scheduleContainer = document.getElementById('scheduleContainer');
+
+                // Set initial date to today
+                this.dateInput.valueAsDate = new Date();
+
+                this.setupEventListeners();
+                this.checkLoginStatus();
+            }
+
+            setupEventListeners() {
+                // Login event
+                this.loginBtn.addEventListener('click', this.login.bind(this));
+                this.emailInput.addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter') this.login();
+                });
+
+                // Logout event
+                this.logoutBtn.addEventListener('click', this.logout.bind(this));
+
+                // Infinite scroll
+                this.scheduleContainer.addEventListener('scroll', this.loadMoreDays.bind(this));
+
+                // Add topic event
+                this.addTopicBtn.addEventListener('click', this.addTopic.bind(this));
+                this.topicInput.addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter') this.addTopic();
+                });
+            }
+
+            login() {
+                const email = this.emailInput.value.trim();
+                
+                if (this.isValidEmail(email)) {
+                    // Store email in local storage
+                    localStorage.setItem('userEmail', email);
+                    
+                    // Show main app, hide login
+                    this.loginContainer.style.display = 'none';
+                    this.mainApp.style.display = 'block';
+                    
+                    this.loginMessage.textContent = `Logged in as ${email}`;
+                    this.generateInitialSchedule();
+                    this.loadUserTopics(email);
+                } else {
+                    this.loginError.textContent = 'Please enter a valid email address';
+                }
+            }
+
+            logout() {
+                // Clear local storage
+                localStorage.removeItem('userEmail');
+                localStorage.removeItem(`topics_${this.getCurrentUserEmail()}`);
+                
+                // Show login, hide main app
+                this.loginContainer.style.display = 'flex';
+                this.mainApp.style.display = 'none';
+                
+                // Clear schedule and inputs
+                this.scheduleBody.innerHTML = '';
+                this.loginMessage.textContent = '';
+                this.emailInput.value = '';
+                this.loginError.textContent = '';
+            }
+
+            isValidEmail(email) {
+                const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+                return emailRegex.test(email);
+            }
+
+            checkLoginStatus() {
+                const savedEmail = localStorage.getItem('userEmail');
+                
+                if (savedEmail) {
+                    this.emailInput.value = savedEmail;
+                    this.login();
+                }
+            }
+
+            getCurrentUserEmail() {
+                return localStorage.getItem('userEmail') || 'default_user';
+            }
+
+            saveUserTopics() {
+                const userEmail = this.getCurrentUserEmail();
+                const topics = {};
+                
+                // Collect all topics for each date
+                document.querySelectorAll('.topic-cell').forEach(cell => {
+                    const date = cell.getAttribute('data-date');
+                    const cellTopics = Array.from(cell.children).map(span => 
+                        span.firstChild.textContent.trim()
+                    );
+                    
+                    if (cellTopics.length > 0) {
+                        topics[date] = cellTopics;
+                    }
+                });
+                
+                localStorage.setItem(`topics_${userEmail}`, JSON.stringify(topics));
+            }
+
+            loadUserTopics(email) {
+                const savedTopics = localStorage.getItem(`topics_${email}`);
+                
+                if (savedTopics) {
+                    const topics = JSON.parse(savedTopics);
+                    
+                    Object.entries(topics).forEach(([date, topicList]) => {
+                        const cell = document.querySelector(`.topic-cell[data-date="${date}"]`);
+                        
+                        if (cell) {
+                            // Clear existing topics in the cell
+                            cell.innerHTML = '';
+                            
+                            // Add saved topics
+                            topicList.forEach(topic => {
+                                const originalDate = new Date(date);
+                                this.insertTopicInCell(cell, topic, originalDate);
+                            });
+                        }
+                    });
+                }
+            }
+
+            generateInitialSchedule() {
+                const today = new Date();
+                this.generateDaysFromDate(today, true);
+            }
+
+            generateDaysFromDate(startDate, isInitial = false) {
+                const batchSize = 1000; // Large batch to reduce scroll events
+                
+                for (let i = 0; i < batchSize; i++) {
+                    const currentDate = new Date(startDate);
+                    currentDate.setDate(startDate.getDate() + i);
+                    
+                    this.addDateRow(currentDate);
+                }
+                
+                // Update last generated date
+                this.lastGeneratedDate = new Date(startDate);
+                this.lastGeneratedDate.setDate(startDate.getDate() + batchSize - 1);
+            }
+
+            addDateRow(date) {
+                const row = document.createElement('tr');
+                const dateCell = document.createElement('td');
+                const topicCell = document.createElement('td');
+
+                dateCell.textContent = date.toLocaleDateString();
+                dateCell.setAttribute('data-original-date', date.toISOString().split('T')[0]);
+                topicCell.setAttribute('data-date', date.toISOString().split('T')[0]);
+                topicCell.classList.add('topic-cell');
+
+                row.appendChild(dateCell);
+                row.appendChild(topicCell);
+                this.scheduleBody.appendChild(row);
+            }
+
+            addTopic() {
+                const topic = this.topicInput.value.trim();
+                const selectedDate = new Date(this.dateInput.value);
+
+                if (topic && this.dateInput.value) {
+                    const repetitionDays = [1, 3, 7, 14];
+                    
+                    repetitionDays.forEach(days => {
+                        const futureDate = new Date(selectedDate);
+                        futureDate.setDate(selectedDate.getDate() + days);
+                        const futureDateString = futureDate.toISOString().split('T')[0];
+                        
+                        const futureCell = document.querySelector(`[data-date="${futureDateString}"]`);
+                        if (futureCell) {
+                            this.insertTopicInCell(futureCell, topic, selectedDate);
+                        }
+                    });
+
+                    // Clear input and save topics
+                    this.topicInput.value = '';
+                    this.saveUserTopics();
+                }
+            }
+
+            insertTopicInCell(cell, topic, originalDate) {
+                // Create a topic element with delete option
+                const topicSpan = document.createElement('span');
+                topicSpan.innerHTML = `${topic} <span class="delete-topic" data-original-date="${originalDate.toISOString().split('T')[0]}">❌</span>`;
+                
+                // Add delete functionality
+                const deleteSpan = topicSpan.querySelector('.delete-topic');
+                deleteSpan.addEventListener('click', (e) => {
+                    const originalDateStr = e.target.getAttribute('data-original-date');
+                    const parentSpan = e.target.parentElement;
+                    const topicText = parentSpan.firstChild.textContent.trim();
+                    
+                    // Remove from this cell
+                    parentSpan.remove();
+                    
+                    // Remove from other cells with the same topic
+                    this.removeSimilarTopics(topicText, originalDateStr);
+                    
+                    // Save updated topics
+                    this.saveUserTopics();
+                });
+
+                // Append to cell if not already present
+                if (!Array.from(cell.children).some(child => 
+                    child.firstChild.textContent.trim() === topic)) {
+                    cell.appendChild(topicSpan);
+                }
+            }
+
+            removeSimilarTopics(topic, originalDateStr) {
+                const allCells = document.querySelectorAll('.topic-cell');
+                allCells.forEach(cell => {
+                    const topicSpans = Array.from(cell.children);
+                    topicSpans.forEach(span => {
+                        const deleteSpan = span.querySelector('.delete-topic');
+                        if (deleteSpan && deleteSpan.getAttribute('data-original-date') === originalDateStr) {
+                            span.remove();
+                        }
+                    });
+                });
+            }
+
+            loadMoreDays() {
+                // Check if user is near the bottom
+                if (this.scheduleContainer.scrollTop + this.scheduleContainer.clientHeight >= 
+                    this.scheduleContainer.scrollHeight - 100) {
+                    // Generate more days from the last generated date
+                    this.generateDaysFromDate(this.lastGeneratedDate);
+                }
+            }
+        }
+
+        // Initialize the schedule
+        new SpacedRepetitionSchedule();
+    </script>
+</body>
+</html>
