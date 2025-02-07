@@ -10,6 +10,8 @@
             margin: 0 auto;
             padding: 20px;
             line-height: 1.6;
+            background-color: #121212;
+            color: #e0e0e0;
         }
         #loginContainer, #controlPanel {
             display: flex;
@@ -17,16 +19,19 @@
             margin-bottom: 20px;
             align-items: center;
         }
-        #dateInput, #topicInput, #emailInput {
+        #dateInput, #topicInput, #emailInput, #intervalsInput {
             padding: 10px;
+            background-color: #1e1e1e;
+            border: 1px solid #444;
+            color: #e0e0e0;
         }
         #loginMessage {
             margin-left: 10px;
-            color: green;
+            color: #4caf50;
         }
         #loginError {
             margin-left: 10px;
-            color: red;
+            color: #f44336;
         }
         table {
             width: 100%;
@@ -38,19 +43,20 @@
         thead {
             position: sticky;
             top: 0;
-            background-color: white;
+            background-color: #1e1e1e;
             z-index: 10;
         }
         th, td {
-            border: 1px solid #ddd;
+            border: 1px solid #444;
             padding: 10px;
             text-align: left;
         }
         th {
-            background-color: #f2f2f2;
+            background-color: #2c2c2c;
+            color: #e0e0e0;
         }
         .topic-cell {
-            background-color: #e6f3ff;
+            background-color: #1a2b3c;
             min-height: 30px;
         }
         #scheduleContainer {
@@ -58,12 +64,26 @@
             overflow-y: auto;
         }
         .delete-topic {
-            color: red;
+            color: #f44336;
             cursor: pointer;
             margin-left: 5px;
         }
         #mainApp {
             display: none;
+        }
+        button {
+            background-color: #2196f3;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #1976d2;
+        }
+        h1 {
+            color: #e0e0e0;
         }
     </style>
 </head>
@@ -81,6 +101,7 @@
         <div id="controlPanel">
             <input type="date" id="dateInput">
             <input type="text" id="topicInput" placeholder="Enter topic">
+            <input type="text" id="intervalsInput" placeholder="Repeat intervals (comma-separated)">
             <button id="addTopicBtn">Add Topic</button>
             <button id="logoutBtn">Logout</button>
         </div>
@@ -103,6 +124,7 @@
     <script>
         class SpacedRepetitionSchedule {
             constructor() {
+                // DOM element references
                 this.loginContainer = document.getElementById('loginContainer');
                 this.mainApp = document.getElementById('mainApp');
                 this.emailInput = document.getElementById('emailInput');
@@ -114,11 +136,19 @@
                 this.scheduleBody = document.getElementById('scheduleBody');
                 this.dateInput = document.getElementById('dateInput');
                 this.topicInput = document.getElementById('topicInput');
+                this.intervalsInput = document.getElementById('intervalsInput');
                 this.addTopicBtn = document.getElementById('addTopicBtn');
                 this.scheduleContainer = document.getElementById('scheduleContainer');
 
+                // State variables for infinite scrolling
+                this.lastGeneratedDate = null;
+                this.isLoading = false;
+                this.yearsToGenerate = 10; // Extend into future
+
                 // Set initial date to today
                 this.dateInput.valueAsDate = new Date();
+                // Set default intervals
+                this.intervalsInput.value = '1,3,7,14';
 
                 this.setupEventListeners();
                 this.checkLoginStatus();
@@ -134,14 +164,30 @@
                 // Logout event
                 this.logoutBtn.addEventListener('click', this.logout.bind(this));
 
-                // Infinite scroll
-                this.scheduleContainer.addEventListener('scroll', this.loadMoreDays.bind(this));
+                // Infinite scroll with debounce
+                this.scheduleContainer.addEventListener('scroll', this.debouncedLoadMoreDays.bind(this));
 
                 // Add topic event
                 this.addTopicBtn.addEventListener('click', this.addTopic.bind(this));
                 this.topicInput.addEventListener('keypress', (e) => {
                     if (e.key === 'Enter') this.addTopic();
                 });
+            }
+
+            // Debounce function to prevent too frequent calls
+            debouncedLoadMoreDays() {
+                if (this.isLoading) return;
+                
+                const bottomBuffer = 100;
+                const isNearBottom = 
+                    this.scheduleContainer.scrollTop + 
+                    this.scheduleContainer.clientHeight >= 
+                    this.scheduleContainer.scrollHeight - bottomBuffer;
+
+                if (isNearBottom) {
+                    this.isLoading = true;
+                    this.loadMoreDays();
+                }
             }
 
             login() {
@@ -167,6 +213,7 @@
                 // Clear local storage
                 localStorage.removeItem('userEmail');
                 localStorage.removeItem(`topics_${this.getCurrentUserEmail()}`);
+                localStorage.removeItem(`intervals_${this.getCurrentUserEmail()}`);
                 
                 // Show login, hide main app
                 this.loginContainer.style.display = 'flex';
@@ -177,6 +224,8 @@
                 this.loginMessage.textContent = '';
                 this.emailInput.value = '';
                 this.loginError.textContent = '';
+                this.intervalsInput.value = '1,3,7,14';
+                this.lastGeneratedDate = null;
             }
 
             isValidEmail(email) {
@@ -214,10 +263,18 @@
                 });
                 
                 localStorage.setItem(`topics_${userEmail}`, JSON.stringify(topics));
+                
+                // Save custom intervals
+                localStorage.setItem(`intervals_${userEmail}`, this.intervalsInput.value);
             }
 
             loadUserTopics(email) {
                 const savedTopics = localStorage.getItem(`topics_${email}`);
+                const savedIntervals = localStorage.getItem(`intervals_${email}`);
+                
+                if (savedIntervals) {
+                    this.intervalsInput.value = savedIntervals;
+                }
                 
                 if (savedTopics) {
                     const topics = JSON.parse(savedTopics);
@@ -245,9 +302,10 @@
             }
 
             generateDaysFromDate(startDate, isInitial = false) {
-                const batchSize = 1000; // Large batch to reduce scroll events
+                // Generate days for multiple years into the future
+                const daysToGenerate = 365 * this.yearsToGenerate;
                 
-                for (let i = 0; i < batchSize; i++) {
+                for (let i = 0; i < daysToGenerate; i++) {
                     const currentDate = new Date(startDate);
                     currentDate.setDate(startDate.getDate() + i);
                     
@@ -256,7 +314,10 @@
                 
                 // Update last generated date
                 this.lastGeneratedDate = new Date(startDate);
-                this.lastGeneratedDate.setDate(startDate.getDate() + batchSize - 1);
+                this.lastGeneratedDate.setDate(startDate.getDate() + daysToGenerate - 1);
+                
+                // Reset loading state
+                this.isLoading = false;
             }
 
             addDateRow(date) {
@@ -277,11 +338,10 @@
             addTopic() {
                 const topic = this.topicInput.value.trim();
                 const selectedDate = new Date(this.dateInput.value);
+                const intervals = this.parseIntervals(this.intervalsInput.value);
 
-                if (topic && this.dateInput.value) {
-                    const repetitionDays = [1, 3, 7, 14];
-                    
-                    repetitionDays.forEach(days => {
+                if (topic && this.dateInput.value && intervals.length > 0) {
+                    intervals.forEach(days => {
                         const futureDate = new Date(selectedDate);
                         futureDate.setDate(selectedDate.getDate() + days);
                         const futureDateString = futureDate.toISOString().split('T')[0];
@@ -298,23 +358,29 @@
                 }
             }
 
+            parseIntervals(intervalsString) {
+                // Parse comma-separated intervals, convert to numbers, and sort
+                return intervalsString
+                    .split(',')
+                    .map(interval => parseInt(interval.trim(), 10))
+                    .filter(interval => !isNaN(interval) && interval > 0)
+                    .sort((a, b) => a - b);
+            }
+
             insertTopicInCell(cell, topic, originalDate) {
                 // Create a topic element with delete option
                 const topicSpan = document.createElement('span');
-                topicSpan.innerHTML = `${topic} <span class="delete-topic" data-original-date="${originalDate.toISOString().split('T')[0]}">❌</span>`;
+                topicSpan.innerHTML = `${topic} <span class="delete-topic" data-original-date="${originalDate.toISOString().split('T')[0]}" data-topic="${topic}">❌</span>`;
                 
                 // Add delete functionality
                 const deleteSpan = topicSpan.querySelector('.delete-topic');
                 deleteSpan.addEventListener('click', (e) => {
-                    const originalDateStr = e.target.getAttribute('data-original-date');
-                    const parentSpan = e.target.parentElement;
-                    const topicText = parentSpan.firstChild.textContent.trim();
+                    const topicElement = e.target.parentElement;
+                    const specificTopic = e.target.getAttribute('data-topic');
+                    const cellWithTopic = topicElement.parentElement;
                     
-                    // Remove from this cell
-                    parentSpan.remove();
-                    
-                    // Remove from other cells with the same topic
-                    this.removeSimilarTopics(topicText, originalDateStr);
+                    // Remove only this specific topic from this cell
+                    topicElement.remove();
                     
                     // Save updated topics
                     this.saveUserTopics();
@@ -327,25 +393,12 @@
                 }
             }
 
-            removeSimilarTopics(topic, originalDateStr) {
-                const allCells = document.querySelectorAll('.topic-cell');
-                allCells.forEach(cell => {
-                    const topicSpans = Array.from(cell.children);
-                    topicSpans.forEach(span => {
-                        const deleteSpan = span.querySelector('.delete-topic');
-                        if (deleteSpan && deleteSpan.getAttribute('data-original-date') === originalDateStr) {
-                            span.remove();
-                        }
-                    });
-                });
-            }
-
             loadMoreDays() {
-                // Check if user is near the bottom
-                if (this.scheduleContainer.scrollTop + this.scheduleContainer.clientHeight >= 
-                    this.scheduleContainer.scrollHeight - 100) {
-                    // Generate more days from the last generated date
-                    this.generateDaysFromDate(this.lastGeneratedDate);
+                // If last generated date exists, generate more days from there
+                if (this.lastGeneratedDate) {
+                    const nextStartDate = new Date(this.lastGeneratedDate);
+                    nextStartDate.setDate(nextStartDate.getDate() + 1);
+                    this.generateDaysFromDate(nextStartDate);
                 }
             }
         }
