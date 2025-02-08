@@ -2,11 +2,13 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Spaced Repetition Schedule</title>
     <style>
         body {
             font-family: Arial, sans-serif;
-            max-width: 900px;
+            width: 95%;
+            max-width: 1200px;
             margin: 0 auto;
             padding: 20px;
             line-height: 1.6;
@@ -18,12 +20,15 @@
             gap: 10px;
             margin-bottom: 20px;
             align-items: center;
+            flex-wrap: wrap;
         }
         #dateInput, #topicInput, #emailInput, #intervalsInput {
             padding: 10px;
             background-color: #1e1e1e;
             border: 1px solid #444;
             color: #e0e0e0;
+            flex: 1;
+            min-width: 200px;
         }
         #loginMessage {
             margin-left: 10px;
@@ -33,12 +38,17 @@
             margin-left: 10px;
             color: #f44336;
         }
+        #scheduleContainer {
+            width: 100%;
+            max-height: 500px;
+            overflow-y: auto;
+            border: 1px solid #444;
+        }
         table {
             width: 100%;
             border-collapse: collapse;
-            max-height: 500px;
-            overflow-y: auto;
-            display: block;
+            table-layout: fixed;
+            transition: transform 0.3s ease;
         }
         thead {
             position: sticky;
@@ -50,23 +60,32 @@
             border: 1px solid #444;
             padding: 10px;
             text-align: left;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
         }
         th {
             background-color: #2c2c2c;
             color: #e0e0e0;
         }
+        th:first-child {
+            width: 120px;
+        }
         .topic-cell {
             background-color: #1a2b3c;
             min-height: 30px;
         }
-        #scheduleContainer {
-            max-height: 500px;
-            overflow-y: auto;
+        .topic-cell span {
+            display: inline-block;
+            margin: 2px 5px;
+            padding: 2px 5px;
+            background-color: #2c3e50;
+            border-radius: 3px;
         }
         .delete-topic {
             color: #f44336;
             cursor: pointer;
             margin-left: 5px;
+            padding: 0 3px;
         }
         #mainApp {
             display: none;
@@ -78,12 +97,48 @@
             padding: 10px 15px;
             cursor: pointer;
             transition: background-color 0.3s;
+            white-space: nowrap;
         }
         button:hover {
             background-color: #1976d2;
         }
         h1 {
             color: #e0e0e0;
+            margin-bottom: 20px;
+        }
+        #zoomControls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+
+        @media screen and (max-width: 768px) {
+            body {
+                padding: 10px;
+                width: 98%;
+            }
+            #loginContainer, #controlPanel {
+                flex-direction: column;
+                gap: 5px;
+            }
+            #dateInput, #topicInput, #emailInput, #intervalsInput {
+                width: 100%;
+                min-width: unset;
+            }
+            button {
+                width: 100%;
+            }
+            th:first-child {
+                width: 90px;
+            }
+            th, td {
+                padding: 8px 5px;
+                font-size: 14px;
+            }
+            .topic-cell span {
+                margin: 1px 2px;
+                padding: 1px 3px;
+            }
         }
     </style>
 </head>
@@ -105,6 +160,11 @@
             <button id="addTopicBtn">Add Topic</button>
             <button id="logoutBtn">Logout</button>
         </div>
+
+        <div id="zoomControls">
+            <button id="zoomInBtn">Zoom In</button>
+            <button id="zoomOutBtn">Zoom Out</button>
+        </div>
         
         <div id="scheduleContainer">
             <table id="scheduleTable">
@@ -115,7 +175,6 @@
                     </tr>
                 </thead>
                 <tbody id="scheduleBody">
-                    <!-- Days will be dynamically generated -->
                 </tbody>
             </table>
         </div>
@@ -124,7 +183,6 @@
     <script>
         class SpacedRepetitionSchedule {
             constructor() {
-                // DOM element references
                 this.loginContainer = document.getElementById('loginContainer');
                 this.mainApp = document.getElementById('mainApp');
                 this.emailInput = document.getElementById('emailInput');
@@ -139,42 +197,56 @@
                 this.intervalsInput = document.getElementById('intervalsInput');
                 this.addTopicBtn = document.getElementById('addTopicBtn');
                 this.scheduleContainer = document.getElementById('scheduleContainer');
+                this.scheduleTable = document.getElementById('scheduleTable');
 
-                // State variables for infinite scrolling
+                // Zoom controls
+                this.zoomInBtn = document.getElementById('zoomInBtn');
+                this.zoomOutBtn = document.getElementById('zoomOutBtn');
+                this.currentZoom = parseFloat(localStorage.getItem('tableZoom')) || 1;
+
                 this.lastGeneratedDate = null;
                 this.isLoading = false;
-                this.yearsToGenerate = 10; // Extend into future
+                this.yearsToGenerate = 10;
 
-                // Set initial date to today
                 this.dateInput.valueAsDate = new Date();
-                // Set default intervals
                 this.intervalsInput.value = '1,3,7,14';
 
                 this.setupEventListeners();
                 this.checkLoginStatus();
+                this.applyZoom();
             }
 
             setupEventListeners() {
-                // Login event
                 this.loginBtn.addEventListener('click', this.login.bind(this));
                 this.emailInput.addEventListener('keypress', (e) => {
                     if (e.key === 'Enter') this.login();
                 });
 
-                // Logout event
                 this.logoutBtn.addEventListener('click', this.logout.bind(this));
-
-                // Infinite scroll with debounce
                 this.scheduleContainer.addEventListener('scroll', this.debouncedLoadMoreDays.bind(this));
 
-                // Add topic event
                 this.addTopicBtn.addEventListener('click', this.addTopic.bind(this));
                 this.topicInput.addEventListener('keypress', (e) => {
                     if (e.key === 'Enter') this.addTopic();
                 });
+
+                // Zoom event listeners
+                this.zoomInBtn.addEventListener('click', () => this.zoom(0.1));
+                this.zoomOutBtn.addEventListener('click', () => this.zoom(-0.1));
             }
 
-            // Debounce function to prevent too frequent calls
+            zoom(delta) {
+                const newZoom = Math.max(0.5, Math.min(2, this.currentZoom + delta));
+                this.currentZoom = newZoom;
+                this.applyZoom();
+                localStorage.setItem('tableZoom', newZoom.toString());
+            }
+
+            applyZoom() {
+                this.scheduleTable.style.transform = `scale(${this.currentZoom})`;
+                this.scheduleTable.style.transformOrigin = 'top left';
+            }
+
             debouncedLoadMoreDays() {
                 if (this.isLoading) return;
                 
@@ -194,13 +266,9 @@
                 const email = this.emailInput.value.trim();
                 
                 if (this.isValidEmail(email)) {
-                    // Store email in local storage
                     localStorage.setItem('userEmail', email);
-                    
-                    // Show main app, hide login
                     this.loginContainer.style.display = 'none';
                     this.mainApp.style.display = 'block';
-                    
                     this.loginMessage.textContent = `Logged in as ${email}`;
                     this.generateInitialSchedule();
                     this.loadUserTopics(email);
@@ -210,16 +278,13 @@
             }
 
             logout() {
-                // Clear local storage
                 localStorage.removeItem('userEmail');
                 localStorage.removeItem(`topics_${this.getCurrentUserEmail()}`);
                 localStorage.removeItem(`intervals_${this.getCurrentUserEmail()}`);
                 
-                // Show login, hide main app
                 this.loginContainer.style.display = 'flex';
                 this.mainApp.style.display = 'none';
                 
-                // Clear schedule and inputs
                 this.scheduleBody.innerHTML = '';
                 this.loginMessage.textContent = '';
                 this.emailInput.value = '';
@@ -235,7 +300,6 @@
 
             checkLoginStatus() {
                 const savedEmail = localStorage.getItem('userEmail');
-                
                 if (savedEmail) {
                     this.emailInput.value = savedEmail;
                     this.login();
@@ -250,7 +314,6 @@
                 const userEmail = this.getCurrentUserEmail();
                 const topics = {};
                 
-                // Collect all topics for each date
                 document.querySelectorAll('.topic-cell').forEach(cell => {
                     const date = cell.getAttribute('data-date');
                     const cellTopics = Array.from(cell.children).map(span => 
@@ -263,8 +326,6 @@
                 });
                 
                 localStorage.setItem(`topics_${userEmail}`, JSON.stringify(topics));
-                
-                // Save custom intervals
                 localStorage.setItem(`intervals_${userEmail}`, this.intervalsInput.value);
             }
 
@@ -283,10 +344,7 @@
                         const cell = document.querySelector(`.topic-cell[data-date="${date}"]`);
                         
                         if (cell) {
-                            // Clear existing topics in the cell
                             cell.innerHTML = '';
-                            
-                            // Add saved topics
                             topicList.forEach(topic => {
                                 const originalDate = new Date(date);
                                 this.insertTopicInCell(cell, topic, originalDate);
@@ -302,21 +360,16 @@
             }
 
             generateDaysFromDate(startDate, isInitial = false) {
-                // Generate days for multiple years into the future
                 const daysToGenerate = 365 * this.yearsToGenerate;
                 
                 for (let i = 0; i < daysToGenerate; i++) {
                     const currentDate = new Date(startDate);
                     currentDate.setDate(startDate.getDate() + i);
-                    
                     this.addDateRow(currentDate);
                 }
                 
-                // Update last generated date
                 this.lastGeneratedDate = new Date(startDate);
                 this.lastGeneratedDate.setDate(startDate.getDate() + daysToGenerate - 1);
-                
-                // Reset loading state
                 this.isLoading = false;
             }
 
@@ -352,14 +405,12 @@
                         }
                     });
 
-                    // Clear input and save topics
                     this.topicInput.value = '';
                     this.saveUserTopics();
                 }
             }
 
             parseIntervals(intervalsString) {
-                // Parse comma-separated intervals, convert to numbers, and sort
                 return intervalsString
                     .split(',')
                     .map(interval => parseInt(interval.trim(), 10))
@@ -368,25 +419,17 @@
             }
 
             insertTopicInCell(cell, topic, originalDate) {
-                // Create a topic element with delete option
                 const topicSpan = document.createElement('span');
                 topicSpan.innerHTML = `${topic} <span class="delete-topic" data-original-date="${originalDate.toISOString().split('T')[0]}" data-topic="${topic}">❌</span>`;
                 
-                // Add delete functionality
                 const deleteSpan = topicSpan.querySelector('.delete-topic');
                 deleteSpan.addEventListener('click', (e) => {
                     const topicElement = e.target.parentElement;
-                    const specificTopic = e.target.getAttribute('data-topic');
                     const cellWithTopic = topicElement.parentElement;
-                    
-                    // Remove only this specific topic from this cell
                     topicElement.remove();
-                    
-                    // Save updated topics
                     this.saveUserTopics();
                 });
 
-                // Append to cell if not already present
                 if (!Array.from(cell.children).some(child => 
                     child.firstChild.textContent.trim() === topic)) {
                     cell.appendChild(topicSpan);
@@ -394,7 +437,6 @@
             }
 
             loadMoreDays() {
-                // If last generated date exists, generate more days from there
                 if (this.lastGeneratedDate) {
                     const nextStartDate = new Date(this.lastGeneratedDate);
                     nextStartDate.setDate(nextStartDate.getDate() + 1);
@@ -403,7 +445,6 @@
             }
         }
 
-        // Initialize the schedule
         new SpacedRepetitionSchedule();
     </script>
 </body>
